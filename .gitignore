@@ -1,0 +1,7 @@
+*.pyc
+*.zip
+data/datasets/
+data/widerface/
+checkpoints/
+results/
+widerface_evaluate/

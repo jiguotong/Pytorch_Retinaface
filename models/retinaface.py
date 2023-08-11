@@ -5,9 +5,9 @@ import torchvision.models._utils as _utils
 import torch.nn.functional as F
 from collections import OrderedDict
 
-from models.net import MobileNetV1 as MobileNetV1
-from models.net import FPN as FPN
-from models.net import SSH as SSH
+from models.modules import MobileNetV1 as MobileNetV1
+from models.modules import FPN as FPN
+from models.modules import SSH as SSH
 
 
 
@@ -20,6 +20,7 @@ class ClassHead(nn.Module):
     def forward(self,x):
         out = self.conv1x1(x)
         out = out.permute(0,2,3,1).contiguous()
+        
         
         return out.view(out.shape[0], -1, 2)
 
@@ -70,13 +71,13 @@ class RetinaFace(nn.Module):
             backbone = models.resnet50(pretrained=cfg['pretrain'])
 
         self.body = _utils.IntermediateLayerGetter(backbone, cfg['return_layers'])
-        in_channels_stage2 = cfg['in_channel']
+        in_channels_stage2 = cfg['in_channel']#32
         in_channels_list = [
             in_channels_stage2 * 2,
             in_channels_stage2 * 4,
             in_channels_stage2 * 8,
         ]
-        out_channels = cfg['out_channel']
+        out_channels = cfg['out_channel']#64
         self.fpn = FPN(in_channels_list,out_channels)
         self.ssh1 = SSH(out_channels, out_channels)
         self.ssh2 = SSH(out_channels, out_channels)
@@ -116,9 +117,9 @@ class RetinaFace(nn.Module):
         feature3 = self.ssh3(fpn[2])
         features = [feature1, feature2, feature3]
 
-        bbox_regressions = torch.cat([self.BboxHead[i](feature) for i, feature in enumerate(features)], dim=1)
-        classifications = torch.cat([self.ClassHead[i](feature) for i, feature in enumerate(features)],dim=1)
-        ldm_regressions = torch.cat([self.LandmarkHead[i](feature) for i, feature in enumerate(features)], dim=1)
+        bbox_regressions = torch.cat([self.BboxHead[i](feature) for i, feature in enumerate(features)], dim=1)  #(1,32256,4)
+        classifications = torch.cat([self.ClassHead[i](feature) for i, feature in enumerate(features)],dim=1)   #(1,32256,2)
+        ldm_regressions = torch.cat([self.LandmarkHead[i](feature) for i, feature in enumerate(features)], dim=1)   #(1,32256,10)
 
         if self.phase == 'train':
             output = (bbox_regressions, classifications, ldm_regressions)

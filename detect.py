@@ -4,8 +4,8 @@ import argparse
 import torch
 import torch.backends.cudnn as cudnn
 import numpy as np
-from data import cfg_mnet, cfg_re50
-from layers.functions.prior_box import PriorBox
+from configs import cfg_mnet, cfg_re50
+from utils.prior_box import PriorBox
 from utils.nms.py_cpu_nms import py_cpu_nms
 import cv2
 from models.retinaface import RetinaFace

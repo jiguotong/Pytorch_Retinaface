@@ -37,6 +37,7 @@ def conv_dw(inp, oup, stride, leaky=0.1):
         nn.LeakyReLU(negative_slope= leaky,inplace=True),
     )
 
+## 加强特征提取模块结构
 class SSH(nn.Module):
     def __init__(self, in_channel, out_channel):
         super(SSH, self).__init__()
@@ -55,9 +56,11 @@ class SSH(nn.Module):
     def forward(self, input):
         conv3X3 = self.conv3X3(input)
 
+        ## 两次3*3等于一次5*5
         conv5X5_1 = self.conv5X5_1(input)
         conv5X5 = self.conv5X5_2(conv5X5_1)
 
+        ## 三次3*3等于一次7*7
         conv7X7_2 = self.conv7X7_2(conv5X5_1)
         conv7X7 = self.conv7x7_3(conv7X7_2)
 
@@ -65,6 +68,7 @@ class SSH(nn.Module):
         out = F.relu(out)
         return out
 
+## 特征金字塔结构
 class FPN(nn.Module):
     def __init__(self,in_channels_list,out_channels):
         super(FPN,self).__init__()
@@ -96,8 +100,6 @@ class FPN(nn.Module):
 
         out = [output1, output2, output3]
         return out
-
-
 
 class MobileNetV1(nn.Module):
     def __init__(self):
