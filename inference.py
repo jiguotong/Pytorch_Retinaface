@@ -11,58 +11,57 @@ import cv2
 from models.retinaface import RetinaFace
 from utils.box_utils import decode, decode_landm
 from utils.timer import Timer
-
+from utils.utils import show_config
 
 parser = argparse.ArgumentParser(description='Retinaface')
-parser.add_argument('-m', '--trained_model', default='./checkpoints/mobilenet0.25_Final.pth',
-                    type=str, help='Trained state_dict file path to open')
-parser.add_argument('--network', default='mobile0.25', help='Backbone network mobile0.25 or resnet50')
+
 parser.add_argument('--origin_size', default=True, type=str, help='Whether use origin image size to evaluate')
-parser.add_argument('--save_folder', default='./widerface_evaluate/widerface_txt/', type=str, help='Dir to save txt results')
-parser.add_argument('--cpu', action="store_true", default=False, help='Use cpu inference')
-parser.add_argument('--dataset_folder', default='./data/datasets/widerface/val/images/', type=str, help='dataset path')
 parser.add_argument('--confidence_threshold', default=0.02, type=float, help='confidence_threshold')
 parser.add_argument('--top_k', default=5000, type=int, help='top_k')
 parser.add_argument('--nms_threshold', default=0.4, type=float, help='nms_threshold')
 parser.add_argument('--keep_top_k', default=750, type=int, help='keep_top_k')
-parser.add_argument('-s', '--save_image', action="store_true", default=True, help='show detection results')
 parser.add_argument('--vis_thres', default=0.5, type=float, help='visualization_threshold')
 args = parser.parse_args()
 
+class Prediction(object):
+    _defaults={
+        "model_path": './checkpoints/mobilenet0.25_Final.pth',
+        "backbone_name": 'mobile0.25',
+        "save_txt": False,
+        "save_image": True,
+        "cuda": False,
+    }
 
-if __name__ == '__main__':
-    model_path = './checkpoints/mobilenet0.25_Final.pth'
+    def __init__(self, **kwargs):
+        self._defaults.update(kwargs)               ## 更新传进来的参数到_defaults
+        self.__dict__.update(self._defaults)        ## 更新_defaults到self属性
+        self.load()
+        
+        show_config(**self._defaults)
 
-    cfg = None
-    if args.network == "mobile0.25":
-        cfg = cfg_mnet
-    elif args.network == "resnet50":
-        cfg = cfg_re50
+    def load(self):
+        cfg = None
+        if self.backbone_name == "mobile0.25":
+            self.cfg = cfg_mnet
+        elif self.backbone_name == "resnet50":
+            self.cfg = cfg_re50
+        # 加载网络模型
+        net = RetinaFace(cfg=self.cfg, phase = 'test')
+        net.load_state_dict(torch.load(self.model_path))
+        net.eval()
+        cudnn.benchmark = True
+        self.net=net
 
-    # 加载网络模型
-    net = RetinaFace(cfg=cfg, phase = 'test')
-    net.load_state_dict(torch.load(model_path))
-    net.eval()
-    cudnn.benchmark = True
-    device = torch.device("cpu" if args.cpu else "cuda")
-    net.to(device)
-    # testing dataset
-    testset_folder = args.dataset_folder
-    testset_list = args.dataset_folder[:-7] + "wider_val.txt"
+    def detect(self, input_path, output_path):
+        input_dir = os.path.dirname(input_path)
+        input_filename = os.path.basename(input_path)
 
-    with open(testset_list, 'r') as fr:
-        test_dataset = fr.read().split()
-    num_images = len(test_dataset)
+        device = torch.device("cuda" if self.cuda else "cpu")
+        self.net.to(device)
 
-    _t = {'forward_pass': Timer(), 'misc': Timer()}
-
-    # testing begin
-    for i, img_name in enumerate(test_dataset):
-        image_path = testset_folder + img_name
-        img_raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        img_raw = cv2.imread(input_path, cv2.IMREAD_COLOR)
         img = np.float32(img_raw)
 
-        # testing scale
         target_size = 1600
         max_size = 2150
         im_shape = img.shape
@@ -77,6 +76,7 @@ if __name__ == '__main__':
 
         if resize != 1:
             img = cv2.resize(img, None, None, fx=resize, fy=resize, interpolation=cv2.INTER_LINEAR)
+        
         im_height, im_width, _ = img.shape
         scale = torch.Tensor([img.shape[1], img.shape[0], img.shape[1], img.shape[0]])
         img -= (104, 117, 123)
@@ -85,19 +85,17 @@ if __name__ == '__main__':
         img = img.to(device)
         scale = scale.to(device)
 
-        _t['forward_pass'].tic()
-        loc, conf, landms = net(img)  # forward pass
-        _t['forward_pass'].toc()
-        _t['misc'].tic()
-        priorbox = PriorBox(cfg, image_size=(im_height, im_width))
+        loc, conf, landms = self.net(img)  # forward pass
+
+        priorbox = PriorBox(self.cfg, image_size=(im_height, im_width))
         priors = priorbox.forward()
         priors = priors.to(device)
         prior_data = priors.data
-        boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
+        boxes = decode(loc.data.squeeze(0), prior_data, self.cfg['variance'])
         boxes = boxes * scale / resize
         boxes = boxes.cpu().numpy()
         scores = conf.squeeze(0).data.cpu().numpy()[:, 1]   #[:, 1]只取了较大的一个anchor的置信度
-        landms = decode_landm(landms.data.squeeze(0), prior_data, cfg['variance'])
+        landms = decode_landm(landms.data.squeeze(0), prior_data, self.cfg['variance'])
         scale1 = torch.Tensor([img.shape[3], img.shape[2], img.shape[3], img.shape[2],
                                img.shape[3], img.shape[2], img.shape[3], img.shape[2],
                                img.shape[3], img.shape[2]])
@@ -130,32 +128,36 @@ if __name__ == '__main__':
         # landms = landms[:args.keep_top_k, :]
 
         dets = np.concatenate((dets, landms), axis=1)
-        _t['misc'].toc()
+        
+        if self.save_txt:
+            # 获取txt生成目录
+            output_dir = os.path.dirname(output_path)
+            output_imagename = os.path.basename(output_path)
+            filename, ext = os.path.splitext(output_imagename)
+            output_txtname = filename + '.txt'
 
-        # --------------------------------------------------------------------
-        save_name = args.save_folder + img_name[:-4] + ".txt"
-        dirname = os.path.dirname(save_name)
-        if not os.path.isdir(dirname):
-            os.makedirs(dirname)
-        with open(save_name, "w") as fd:
-            bboxs = dets
-            file_name = os.path.basename(save_name)[:-4] + "\n"
-            bboxs_num = str(len(bboxs)) + "\n"
-            fd.write(file_name)
-            fd.write(bboxs_num)
-            for box in bboxs:
-                x = int(box[0])
-                y = int(box[1])
-                w = int(box[2]) - int(box[0])
-                h = int(box[3]) - int(box[1])
-                confidence = str(box[4])
-                line = str(x) + " " + str(y) + " " + str(w) + " " + str(h) + " " + confidence + " \n"
-                fd.write(line)
-
-        print('im_detect: {:d}/{:d} forward_pass_time: {:.4f}s misc: {:.4f}s'.format(i + 1, num_images, _t['forward_pass'].average_time, _t['misc'].average_time))
-
-        # save image
-        if args.save_image:
+            save_name = os.path.join(output_dir, output_txtname)
+            if not os.path.isdir(output_dir):
+                os.makedirs(output_dir)
+            with open(save_name, "w") as fd:
+                bboxs = dets
+                file_name = os.path.basename(save_name)[:-4] + "\n"
+                bboxs_num = str(len(bboxs)) + "\n"
+                fd.write(file_name)
+                fd.write(bboxs_num)
+                for box in bboxs:
+                    x = int(box[0])
+                    y = int(box[1])
+                    w = int(box[2]) - int(box[0])
+                    h = int(box[3]) - int(box[1])
+                    confidence = str(box[4])
+                    if float(confidence) < args.vis_thres:
+                        continue
+                    line = str(x) + " " + str(y) + " " + str(w) + " " + str(h) + " " + confidence + " \n"
+                    fd.write(line)
+            print("Save txt file {} done.\n".format(output_txtname))
+        
+        if self.save_image:
             for b in dets:
                 if b[4] < args.vis_thres:
                     continue
@@ -173,9 +175,11 @@ if __name__ == '__main__':
                 cv2.circle(img_raw, (b[9], b[10]), 1, (255, 0, 255), 4)
                 cv2.circle(img_raw, (b[11], b[12]), 1, (0, 255, 0), 4)
                 cv2.circle(img_raw, (b[13], b[14]), 1, (255, 0, 0), 4)
-            # save image
-            if not os.path.exists("./results/"):
-                os.makedirs("./results/")
-            name = "./results/" + str(i) + ".jpg"
-            cv2.imwrite(name, img_raw)
+            cv2.imwrite(output_path, img_raw)
+            print("Save image file done.\n")
 
+if __name__ == '__main__':
+    image_path = 'data/inputs/00002.jpg'
+    result_path = 'data/outputs/00002.jpg'
+    predict = Prediction(cuda=True, save_txt=True)
+    predict.detect(image_path, result_path)
